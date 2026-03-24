@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🛡 SentinelLite Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial;
+            background: #0f172a;
+            color: #e5e7eb;
+            padding: 20px;
+        }
+
+        h1,
+        h2 {
+            color: #38bdf8;
+        }
+
+        .card {
+            background: #020617;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+
+        canvas {
+            max-width: 100%;
+        }
+
+        ul {
+            margin-left: 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>🛡 SentinelLite – Endpoint Risk Dashboard</h1>
+    <div class="card">
+        <a href="/export/json" style="padding:8px 12px; color:#38bdf8; border-radius:6px; text-decoration:none;">
+            📥 Download Full Report (JSON)
+        </a>
+    </div>
+
+    <div class="card">
+        <h2>Overall Risk</h2>
+        <p>
+            <strong>Level:</strong> {{ risk.get("risk_level", "N/A") }} |
+            <strong>Score:</strong> {{ risk.get("total_risk_score", 0) }}/100
+        </p>
+    </div>
+
+    <div class="card">
+        <h2>System Snapshot</h2>
+
+        <table style="width:100%; border-collapse: collapse;">
+            <tr>
+                <td><strong>Hostname</strong></td>
+                <td>{{ system.get("hostname", "N/A") }}</td>
+            </tr>
+            <tr>
+                <td><strong>User</strong></td>
+                <td>
+                    {{ system.get("user", "N/A") }}
+                    {% if system.get("is_admin") %}
+                    <span style="color:#ef4444;">(Admin)</span>
+                    {% else %}
+                    <span style="color:#22c55e;">(Standard)</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td><strong>Operating System</strong></td>
+                <td>{{ system.get("os") }} {{ system.get("os_release") }}</td>
+            </tr>
+            <tr>
+                <td><strong>Architecture</strong></td>
+                <td>{{ system.get("architecture", "N/A") }}</td>
+            </tr>
+            <tr>
+                <td><strong>Uptime (hours)</strong></td>
+                <td>{{ system.get("uptime_hours", "N/A") }}</td>
+            </tr>
+            <tr>
+                <td><strong>CPU Usage</strong></td>
+                <td>{{ system.get("cpu_usage", "N/A") }}%</td>
+            </tr>
+            <tr>
+                <td><strong>RAM Usage</strong></td>
+                <td>{{ system.get("ram_usage", "N/A") }}%</td>
+            </tr>
+            <tr>
+                <td><strong>Firewall Status</strong></td>
+                <td>
+                    {% set fw = system.get("firewall_status", "unknown") | lower %}
+                    {% if fw in ["enabled", "active", "on"] %}
+                    <span style="color:#22c55e; font-weight:bold;">{{ system.firewall_status }}</span>
+                    {% else %}
+                    <span style="color:#ef4444; font-weight:bold;">{{ system.firewall_status }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td><strong>Listening Ports</strong></td>
+                <td>
+                    {% if system.get("listening_ports") %}
+                    {% for p in system.listening_ports %}
+                    {% if p < 1024 %} <span
+                        style="background: rgba(199, 54, 54, 0.555); color:white; padding:3px 6px; border-radius:4px;">
+                        {{ p }}
+                        </span>
+                        {% else %}
+                        <span
+                            style="background: rgba(34, 197, 94, 0.555); color:black; padding:3px 6px; border-radius:4px;">
+                            {{ p }}
+                        </span>
+                        {% endif %}
+                        {% endfor %}
+                        {% else %}
+                        None detected
+                        {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td><strong>Startup Paths</strong></td>
+                <td>
+                    <ul>
+                        {% for p in system.get("startup_paths", []) %}
+                        <li>{{ p }}</li>
+                        {% else %}
+                        <li>None detected</li>
+                        {% endfor %}
+                    </ul>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Category Risk Breakdown (Stacked)</h2>
+        <canvas id="barChart"></canvas>
+    </div>
+
+    <div class="card" style="height: 600px;">
+        <h2>Attack Surface Profile (Radar)</h2>
+        <div style="height: 450px;">
+            <canvas id="radarChart" style="height: 450px; width:100%;"></canvas>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Risk History</h2>
+        <canvas id="historyChart"></canvas>
+    </div>
+
+    <div class="card">
+        <h2>Hardening Recommendations</h2>
+        <ul>
+            {% for rec in hardening %}
+            <li>{{ rec }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <script id="dashboard-data" type="application/json">
+    {{ {
+        "scores": scores,
+        "history": history
+    } | tojson }}
+    </script>
+    <script>
+        /* -------- Load injected JSON safely -------- */
+        const rawData = document.getElementById("dashboard-data").textContent;
+        const DASHBOARD_DATA = JSON.parse(rawData);
+
+        /* -------- Extract data -------- */
+        const scores = DASHBOARD_DATA.scores || {};
+        const history = DASHBOARD_DATA.history || [];
+
+        const categories = Object.keys(scores);
+        const values = Object.values(scores);
+        const radarValues = values.map(v => Math.max(v, 5));
+
+        const historyLabels = history.map(h => h.timestamp);
+        const historyScores = history.map(h => h.risk_score);
+
+        /* -------- Stacked Bar -------- */
+        new Chart(document.getElementById("barChart"), {
+            type: "bar",
+            data: {
+                labels: categories,
+                datasets: [{
+                    label: "Risk Points",
+                    data: values
+                }]
+            },
+            options: {
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, max: 25 }
+                }
+            }
+        });
+
+        /* -------- Radar -------- */
+        new Chart(document.getElementById("radarChart"), {
+            type: "radar",
+            data: {
+                labels: categories,
+                datasets: [{
+                    label: "Relative Exposure Profile",
+                    data: radarValues,
+                    backgroundColor: "rgba(255, 99, 132, 0.15)",
+                    borderColor: "rgb(255, 99, 132)",
+                    borderWidth: 2,
+                    pointRadius: 5,
+                    pointHoverRadius: 7
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false, // IMPORTANT
+                scales: {
+                    r: {
+                        angleLines: { color: "#374151" },
+                        grid: { color: "#374151" },
+                        pointLabels: { color: "#e5e7eb", font: { size: 14 } },
+                        suggestedMin: 0,
+                        suggestedMax: 25
+                    }
+                },
+                plugins: {
+                    legend: { position: "top" }
+                }
+            }
+        });
+
+        /* -------- Risk History -------- */
+        new Chart(document.getElementById("historyChart"), {
+            type: "line",
+            data: {
+                labels: historyLabels,
+                datasets: [{
+                    label: "Risk Score Over Time",
+                    data: historyScores,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                scales: {
+                    y: { beginAtZero: true, max: 100 }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
